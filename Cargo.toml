@@ -1,0 +1,11 @@
+[package]
+name = "raymarching"
+version = "0.1.0"
+authors = ["loovjo <jonathan.loov@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+ytesrev = "0.2.4"
+sdl2 = "*"
+ndarray = "0.12"
+rayon = "1.0.3"
