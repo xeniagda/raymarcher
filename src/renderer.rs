@@ -21,7 +21,7 @@ pub struct Renderer {
     world: Box<dyn World>,
 }
 
-const SIZE: usize = 300;
+const SIZE: usize = 600;
 const THREADS: usize = 10;
 
 impl Renderer {

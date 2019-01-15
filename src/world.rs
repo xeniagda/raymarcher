@@ -96,9 +96,13 @@ pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> u8x16
 
     let mut last_des = f32x16::splat(0.);
 
-    for _ in 0..100 {
+    for _ in 0..300 {
+        if hit == !0 {
+            break;
+        }
         let des = world.distance_estimator(&poses);
         // Check for small
+
         for i in 0..16 {
             if (hit >> i) & 1 != 0 {
                 continue;
