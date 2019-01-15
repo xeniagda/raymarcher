@@ -1,10 +1,10 @@
-use sdl2::pixels::{Color, PixelFormatEnum};
-use sdl2::render::{BlendMode, Canvas};
+use sdl2::pixels::PixelFormatEnum;
+use sdl2::render::Canvas;
 use sdl2::video::Window;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::thread;
-use std::time::Instant;
+use std::thread::sleep;
+use std::time::Duration;
 
 use rayon::prelude::*;
 
@@ -13,8 +13,7 @@ use std::f32::consts::PI;
 use ytesrev::prelude::*;
 
 use crate::vec::Vec3dx16;
-use crate::world::{raymarch, Sphere, World};
-use packed_simd::f32x16;
+use crate::world::*;
 
 pub struct Renderer {
     data: Vec<u8>,
@@ -23,18 +22,32 @@ pub struct Renderer {
 }
 
 const SIZE: usize = 300;
-const THREADS: usize = 4;
-
-const CAMERA_POSES: (f32, f32, f32) = (0., 0., -40.);
+const THREADS: usize = 10;
 
 impl Renderer {
     pub fn new() -> Renderer {
+        let cube = Box::new(Cube {
+            center: (0., 0., 0.),
+            dims: (0.5, 0.5, 0.5),
+        });
+        let sphere = Box::new(Sphere {
+            pos: (0., 0., 0.),
+            size: 0.75,
+        });
+
+        let cubesphere = Box::new(Intersection {
+            objects: vec![cube, sphere],
+        });
+
+        let ground = Box::new(Plane { height: 0. });
+
+        let world = Box::new(Union {
+            objects: vec![cubesphere, ground],
+        });
+
         Renderer {
             data: vec![0; (4 * SIZE * SIZE) as usize],
-            world: Box::new(Sphere {
-                pos: (0., 0., 0.),
-                size: 5.,
-            }),
+            world,
             rotation: 0.,
         }
     }
@@ -45,7 +58,7 @@ const FOV_RAD: f32 = FOV_DEG / 360. * PI;
 
 impl Scene for Renderer {
     fn update(&mut self, dt: f64) {
-        self.rotation += dt as f32 * 0.2;
+        self.rotation += dt as f32 * 0.5;
     }
 
     fn draw(&self, canvas: &mut Canvas<Window>, _settings: DrawSettings) {
@@ -64,12 +77,12 @@ impl Scene for Renderer {
 
         let (w, h) = canvas.window().size();
 
-        let rect = Rect::new(0, 0, h, h);
+        let rect = Rect::new(0, 0, SIZE as u32, SIZE as u32);
 
         canvas.copy(&texture, None, rect).expect("Can't copy");
     }
 
-    fn event(&mut self, event: YEvent) {}
+    fn event(&mut self, _event: YEvent) {}
 
     fn action(&self) -> Action {
         Action::Continue
@@ -82,11 +95,14 @@ impl Scene for Renderer {
 
 impl Renderer {
     fn render(&self) {
-        let start = Instant::now();
-
         let dones = Arc::new(AtomicUsize::new(0));
 
         let world = Arc::new(&*self.world);
+
+        let camera = (self.rotation.sin() * 3., 3., -self.rotation.cos() * 3.);
+        // let camera = (0., 40., -40.);
+
+        let look = (-self.rotation, -0.6);
 
         (0..THREADS).into_par_iter().for_each({
             let ptr: *mut u8 = self.data.as_ptr() as *mut u8;
@@ -110,12 +126,12 @@ impl Renderer {
                         let xf = x as f32 / (SIZE - 1) as f32 * 2. - 1.;
                         let yf = y as f32 / (SIZE - 1) as f32 * 2. - 1.;
 
-                        let xrad = (xf + self.rotation.sin()) * FOV_RAD;
-                        let yrad = yf * FOV_RAD;
+                        let xrad = look.0 + xf * FOV_RAD;
+                        let yrad = look.1 - yf * FOV_RAD;
 
                         let dir: (f32, f32, f32) = (
                             yrad.cos() * xrad.sin(),
-                            -yrad.sin(),
+                            yrad.sin(),
                             yrad.cos() * xrad.cos(),
                         );
 
@@ -127,18 +143,27 @@ impl Renderer {
 
                         if idx == 16 {
                             idx = 0;
-                            let res16 =
-                                raymarch(&**world, Vec3dx16::from_tuple(CAMERA_POSES), curr_dirs);
+                            let res16 = raymarch(&**world, Vec3dx16::from_tuple(camera), curr_dirs);
 
                             for i in 0..16 {
+                                let y_;
+                                let x_;
+                                if x + i < start + 15 {
+                                    y_ = y - 1;
+                                    x_ = x + i - 15 + end - start;
+                                } else {
+                                    y_ = y;
+                                    x_ = x - 15 + i;
+                                }
+
                                 unsafe {
-                                    *(ptr.offset(4 * (x + y * SIZE + i - 15) as isize + 0)) =
+                                    *(ptr.offset(4 * (x_ + y_ * SIZE) as isize + 0)) =
                                         res16.extract(i);
-                                    *(ptr.offset(4 * (x + y * SIZE + i - 15) as isize + 1)) =
+                                    *(ptr.offset(4 * (x_ + y_ * SIZE) as isize + 1)) =
                                         res16.extract(i);
-                                    *(ptr.offset(4 * (x + y * SIZE + i - 15) as isize + 2)) =
+                                    *(ptr.offset(4 * (x_ + y_ * SIZE) as isize + 2)) =
                                         res16.extract(i);
-                                    *(ptr.offset(4 * (x + y * SIZE + i - 15) as isize + 3)) = 255;
+                                    *(ptr.offset(4 * (x_ + y_ * SIZE) as isize + 3)) = 255;
                                 }
                             }
                         }
@@ -150,8 +175,8 @@ impl Renderer {
         });
 
         // Wait for each thread
-        while dones.load(Ordering::SeqCst) != THREADS {}
-
-        // println!("Time: {:?}", Instant::now() - start);
+        while dones.load(Ordering::SeqCst) != THREADS {
+            sleep(Duration::from_millis(1));
+        }
     }
 }
