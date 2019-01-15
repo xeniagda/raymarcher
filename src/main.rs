@@ -1,4 +1,7 @@
+#![feature(stdsimd)]
+
 mod renderer;
+mod vec;
 mod world;
 
 use sdl2::event::Event;

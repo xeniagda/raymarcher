@@ -8,28 +8,31 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 
-use ndarray::Array1;
-use std::f64::consts::PI;
+use std::f32::consts::PI;
 
 use ytesrev::prelude::*;
 
-use crate::world::{raymarch, Cube, Sphere, World};
+use crate::vec::Vec3dx16;
+use crate::world::{raymarch, Sphere, World};
+use packed_simd::f32x16;
 
 pub struct Renderer {
     data: Vec<u8>,
-    rotation: f64,
+    rotation: f32,
     world: Box<dyn World>,
 }
 
 const SIZE: usize = 300;
 const THREADS: usize = 4;
 
+const CAMERA_POSES: (f32, f32, f32) = (0., 0., -40.);
+
 impl Renderer {
     pub fn new() -> Renderer {
         Renderer {
             data: vec![0; (4 * SIZE * SIZE) as usize],
             world: Box::new(Sphere {
-                pos: Array1::from_vec(vec![10., 0., 0.]),
+                pos: (0., 0., 0.),
                 size: 5.,
             }),
             rotation: 0.,
@@ -37,12 +40,12 @@ impl Renderer {
     }
 }
 
-const FOV_DEG: f64 = 45.;
-const FOV_RAD: f64 = FOV_DEG / 360. * PI;
+const FOV_DEG: f32 = 45.;
+const FOV_RAD: f32 = FOV_DEG / 360. * PI;
 
 impl Scene for Renderer {
     fn update(&mut self, dt: f64) {
-        self.rotation += dt * 0.2;
+        self.rotation += dt as f32 * 0.2;
     }
 
     fn draw(&self, canvas: &mut Canvas<Window>, _settings: DrawSettings) {
@@ -50,11 +53,7 @@ impl Scene for Renderer {
 
         let creator = canvas.texture_creator();
         let mut texture = creator
-            .create_texture_target(
-                Some(PixelFormatEnum::ABGR8888),
-                SIZE as u32,
-                SIZE as u32,
-            )
+            .create_texture_target(Some(PixelFormatEnum::ABGR8888), SIZE as u32, SIZE as u32)
             .expect("Can't make texture");
 
         // texture.set_blend_mode(BlendMode::Blend);
@@ -85,7 +84,6 @@ impl Renderer {
     fn render(&self) {
         let start = Instant::now();
 
-
         let dones = Arc::new(AtomicUsize::new(0));
 
         let world = Arc::new(&*self.world);
@@ -103,28 +101,46 @@ impl Renderer {
                 let start = n * SIZE / THREADS;
                 let end = (n + 1) * SIZE / THREADS;
 
-                for x in start..end {
-                    for y in 0..SIZE {
-                        let xf = x as f64 / (SIZE - 1) as f64 * 2. - 1.;
-                        let yf = y as f64 / (SIZE - 1) as f64 * 2. - 1.;
+                let mut curr_dirs = Vec3dx16::default();
+
+                let mut idx = 0;
+
+                for y in 0..SIZE {
+                    for x in start..end {
+                        let xf = x as f32 / (SIZE - 1) as f32 * 2. - 1.;
+                        let yf = y as f32 / (SIZE - 1) as f32 * 2. - 1.;
 
                         let xrad = (xf + self.rotation.sin()) * FOV_RAD;
                         let yrad = yf * FOV_RAD;
 
-                        let dir = Array1::from_vec(vec![
+                        let dir: (f32, f32, f32) = (
                             yrad.cos() * xrad.sin(),
                             -yrad.sin(),
                             yrad.cos() * xrad.cos(),
-                        ]);
+                        );
 
-                        let res = raymarch(&**world, Array1::from_vec(vec![0., 0., -30.]), dir);
-                        let color = (res * 255.) as u8;
+                        curr_dirs.xs = curr_dirs.xs.replace(idx, dir.0);
+                        curr_dirs.ys = curr_dirs.ys.replace(idx, dir.1);
+                        curr_dirs.zs = curr_dirs.zs.replace(idx, dir.2);
 
-                        unsafe {
-                            *(ptr.offset(4 * (x + y * SIZE) as isize + 0)) = color;
-                            *(ptr.offset(4 * (x + y * SIZE) as isize + 1)) = color;
-                            *(ptr.offset(4 * (x + y * SIZE) as isize + 2)) = color;
-                            *(ptr.offset(4 * (x + y * SIZE) as isize + 3)) = 255;
+                        idx += 1;
+
+                        if idx == 16 {
+                            idx = 0;
+                            let res16 =
+                                raymarch(&**world, Vec3dx16::from_tuple(CAMERA_POSES), curr_dirs);
+
+                            for i in 0..16 {
+                                unsafe {
+                                    *(ptr.offset(4 * (x + y * SIZE + i - 15) as isize + 0)) =
+                                        res16.extract(i);
+                                    *(ptr.offset(4 * (x + y * SIZE + i - 15) as isize + 1)) =
+                                        res16.extract(i);
+                                    *(ptr.offset(4 * (x + y * SIZE + i - 15) as isize + 2)) =
+                                        res16.extract(i);
+                                    *(ptr.offset(4 * (x + y * SIZE + i - 15) as isize + 3)) = 255;
+                                }
+                            }
                         }
                     }
                 }
@@ -136,6 +152,6 @@ impl Renderer {
         // Wait for each thread
         while dones.load(Ordering::SeqCst) != THREADS {}
 
-        println!("Time: {:?}", Instant::now() - start);
+        // println!("Time: {:?}", Instant::now() - start);
     }
 }
