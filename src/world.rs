@@ -1,6 +1,6 @@
-use std::f32::{INFINITY, NEG_INFINITY};
 use crate::vec::Vec3dx16;
-use packed_simd::{f32x16, u8x16};
+use packed_simd::{f32x16, m32x16, u8x16, FromCast};
+use std::f32::{INFINITY, NEG_INFINITY};
 
 const EPSILON: f32 = 1e-2;
 
@@ -91,33 +91,31 @@ pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> u8x16
             zs: norms,
         };
 
-    let mut res = u8x16::splat(0);
-    let mut hit = 0i16;
+    let mut res = f32x16::splat(0.);
+    let mut hit = m32x16::splat(false);
 
     let mut last_des = f32x16::splat(0.);
 
     for _ in 0..300 {
-        if hit == !0 {
+        if hit.all() {
             break;
         }
         let des = world.distance_estimator(&poses);
-        // Check for small
+        // Check for collisions (eg. very small distance estimates)
 
-        for i in 0..16 {
-            if (hit >> i) & 1 != 0 {
-                continue;
-            }
+        let rays_hit = des.le(f32x16::splat(EPSILON)) & des.lt(last_des);
+        let new_hits = rays_hit & !hit;
 
-            let de = des.extract(i);
-            let last = last_des.extract(i);
+        if new_hits.any() {
+            let fmask = -f32x16::from_cast(new_hits);
 
-            if de <= EPSILON {
-                if de < last {
-                    res = res.replace(i, (255. - 255. * de / last) as u8);
-                    hit |= 1 << i;
-                }
-            }
+            let colors = 255. - 255. * (des / last_des).min(f32x16::splat(1.));
+
+            res = fmask * colors + (1. - fmask) * res;
+
+            hit |= new_hits;
         }
+
 
         let move_vec = Vec3dx16 {
             xs: dirs.xs * des,
@@ -127,5 +125,5 @@ pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> u8x16
         poses += move_vec;
         last_des = des;
     }
-    res
+    u8x16::from_cast(res)
 }
