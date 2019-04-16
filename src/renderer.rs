@@ -25,24 +25,18 @@ pub struct Renderer {
     data: Vec<u8>,
     rotation_x: f32,
     rotation_y: f32,
-    world: Box<dyn World>,
+    world: Box<Union>,
     center_mouse: Cell<bool>,
 }
 
-pub const SIZE: usize = 600;
+pub const SIZE: usize = 300;
 const THREADS: usize = 10;
 
 impl Renderer {
     pub fn new() -> Renderer {
-        let cube = Box::new(Cube {
-            center: (1., -2., 5.),
-            dims: (0.5, 0.5, 0.5),
-        });
+        let cube = construct_cuboid((1., -2., 5.), (0.5, 0.5, 0.5));
 
-        let sphere = Box::new(Sphere {
-            pos: (4., 0., -7.),
-            size: 1.,
-        });
+        let sphere = construct_sphere((-4., 0., -7.), 1.);
 
         // let cubesphere = Box::new(Intersection {
         //     objects: vec![cube, sphere],
@@ -52,7 +46,7 @@ impl Renderer {
         let roof = Box::new(Plane { height: 10. });
 
         let world = Box::new(Union {
-            objects: vec![cube, sphere, ground, roof],
+            objects: vec![Box::new(cube), Box::new(sphere), ground, roof],
         });
 
         Renderer {
@@ -131,19 +125,12 @@ impl Renderer {
     fn render(&self) {
         let dones = Arc::new(AtomicUsize::new(0));
 
-        let world_rotated_y = Rotation {
-            around: RotateAround::Y,
-            inner: &*self.world,
-            angle: self.rotation_x
-        };
+        let world_rotated_y: Rotation<&Union, Union>
+                = Rotation::new(&*self.world, Axis::Y, self.rotation_x);
 
-        let world_rotated_x = Rotation {
-            around: RotateAround::X,
-            inner: &world_rotated_y,
-            angle: self.rotation_y
-        };
+        let world_rotated_x = Rotation::new(world_rotated_y, Axis::X, self.rotation_y);
 
-        let world = Arc::new(&world_rotated_x);
+        let world = Arc::new(world_rotated_x);
 
         let camera = (0., 0., 0.);
 
@@ -186,7 +173,7 @@ impl Renderer {
 
                         if idx == 16 {
                             idx = 0;
-                            let res16 = raymarch(&**world, Vec3dx16::from_tuple(camera), curr_dirs);
+                            let res16 = raymarch(&*world, Vec3dx16::from_tuple(camera), curr_dirs);
 
                             for i in 0..16 {
                                 let y_;

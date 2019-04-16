@@ -1,9 +1,12 @@
+use std::borrow::Borrow;
+use std::marker::PhantomData;
+
 use crate::vec::Vec3dx16;
 use packed_simd::{f32x16, m32x16, u8x16, FromCast};
 use std::f32::{INFINITY, NEG_INFINITY};
 
 const EPSILON: f32 = 1e-2;
-const MAX_ITERATIONS: usize = 50;
+const MAX_ITERATIONS: usize = 30;
 
 pub fn norm(v: &Vec3dx16) -> f32x16 {
     (v.xs * v.xs + v.ys * v.ys + v.zs * v.zs).sqrt()
@@ -13,17 +16,41 @@ pub trait World: Send + Sync {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16;
 }
 
-pub enum RotateAround {
+pub enum Axis {
     X, Y, Z
 }
 
-pub struct Rotation<'a> {
-    pub around: RotateAround,
-    pub inner: &'a dyn World,
+pub struct Rotation<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub around: Axis,
+    pub inner: T,
     pub angle: f32,
+    marker: PhantomData<TBor>
 }
 
-impl <'a> World for Rotation<'a> {
+type RotRef<'a, T> = Rotation<&'a T, T>;
+type RotT<T> = Rotation<T, T>;
+
+impl <T, TBor> Rotation<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub fn new(inner: T, around: Axis, angle: f32) -> Rotation<T, TBor> {
+        Rotation {
+            inner, around, angle, marker: PhantomData
+        }
+    }
+}
+
+impl <T, TBor> World for Rotation<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
         let acos = self.angle.cos();
         let asin = self.angle.sin();
@@ -31,20 +58,103 @@ impl <'a> World for Rotation<'a> {
 
         // TODO: Make sure positive direction is consistent here
         match self.around {
-            RotateAround::X => {
+            Axis::X => {
                 x_.ys = x.ys * f32x16::splat(acos) - x.zs * f32x16::splat(asin);
                 x_.zs = x.ys * f32x16::splat(asin) + x.zs * f32x16::splat(acos);
             }
-            RotateAround::Y => {
+            Axis::Y => {
                 x_.xs = x.xs * f32x16::splat(acos) - x.zs * f32x16::splat(asin);
                 x_.zs = x.xs * f32x16::splat(asin) + x.zs * f32x16::splat(acos);
             }
-            RotateAround::Z => {
+            Axis::Z => {
                 x_.xs = x.xs * f32x16::splat(acos) - x.ys * f32x16::splat(asin);
                 x_.ys = x.xs * f32x16::splat(asin) + x.ys * f32x16::splat(acos);
             }
         }
-        self.inner.distance_estimator(&x_)
+        self.inner.borrow().distance_estimator(&x_)
+    }
+}
+
+pub struct Translation<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub inner: T,
+    pub at: (f32, f32, f32),
+    marker: PhantomData<TBor>
+}
+
+type TransRef<'a, T> = Translation<&'a T, T>;
+type TransT<T> = Translation<T, T>;
+
+impl <T, TBor> Translation<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub fn new(inner: T, at: (f32, f32, f32)) -> Translation<T, TBor> {
+        Translation {
+            inner, at, marker: PhantomData
+        }
+    }
+}
+
+impl <T, TBor> World for Translation<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
+        // haha
+        let splAT = Vec3dx16 {
+            xs: f32x16::splat(self.at.0),
+            ys: f32x16::splat(self.at.1),
+            zs: f32x16::splat(self.at.2),
+        };
+        self.inner.borrow().distance_estimator(&(x - splAT))
+    }
+}
+
+pub struct Scale<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub inner: T,
+    pub scaling: (f32, f32, f32),
+    marker: PhantomData<TBor>
+}
+
+type ScaleRef<'a, T> = Scale<&'a T, T>;
+type ScaleT<T> = Scale<T, T>;
+
+impl <T, TBor> Scale<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub fn new(inner: T, scaling: (f32, f32, f32)) -> Scale<T, TBor> {
+        Scale {
+            inner, scaling, marker: PhantomData
+        }
+    }
+}
+
+impl <T, TBor> World for Scale<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
+        // haha
+        let splat = Vec3dx16 {
+            xs: f32x16::splat(self.scaling.0),
+            ys: f32x16::splat(self.scaling.1),
+            zs: f32x16::splat(self.scaling.2),
+        };
+        self.inner.borrow().distance_estimator(&(x / splat))
+            * self.scaling.0.min(self.scaling.1).min(self.scaling.2)
     }
 }
 
@@ -77,34 +187,22 @@ impl World for Intersection {
 }
 
 
-pub struct Sphere {
-    pub pos: (f32, f32, f32),
-    pub size: f32,
-}
+pub struct UnitSphere;
 
-impl World for Sphere {
+impl World for UnitSphere {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
-        norm(&(x - Vec3dx16::from_tuple(self.pos))) - f32x16::splat(self.size)
+        norm(x) - f32x16::splat(1.)
     }
 }
 
-pub struct Cube {
-    pub center: (f32, f32, f32),
-    pub dims: (f32, f32, f32),
-}
+pub struct UnitCube;
 
-impl World for Cube {
+impl World for UnitCube {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
-        let delta = x - Vec3dx16::from_tuple(self.center);
-        let delta = Vec3dx16 {
-            xs: delta.xs.abs(),
-            ys: delta.ys.abs(),
-            zs: delta.zs.abs(),
-        };
-
-        let delta = delta - Vec3dx16::from_tuple(self.dims);
-
-        delta.xs.max(delta.ys).max(delta.zs)
+        let xs = x.xs.abs() - f32x16::splat(1.);
+        let ys = x.ys.abs() - f32x16::splat(1.);
+        let zs = x.zs.abs() - f32x16::splat(1.);
+        xs.max(ys).max(zs)
     }
 }
 
@@ -116,6 +214,20 @@ impl World for Plane {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
         (x.ys - f32x16::splat(self.height)).abs()
     }
+}
+
+pub fn construct_cuboid(at: (f32, f32, f32), dims: (f32, f32, f32)) -> TransT<ScaleT<UnitCube>> {
+    let cu = UnitCube;
+    let scaled = Scale::new(cu, dims);
+    let translated = Translation::new(scaled, at);
+    translated
+}
+
+pub fn construct_sphere(at: (f32, f32, f32), rad: f32) -> TransT<ScaleT<UnitSphere>> {
+    let sp = UnitSphere;
+    let scaled = Scale::new(sp, (rad, rad, rad));
+    let translated = Translation::new(scaled, at);
+    translated
 }
 
 pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> u8x16 {
