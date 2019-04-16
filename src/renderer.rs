@@ -41,22 +41,23 @@ const THREADS: usize = 10;
 impl Renderer {
     pub fn new() -> Renderer {
         let cube = construct_cuboid((1., -2., 5.), (0.5, 0.5, 0.5));
-
         let cube = Coloring::new(cube, (0., 1., 0.));
 
         let sphere = construct_sphere((-4., 0., 7.), 1.);
-
         let sphere = Coloring::new(sphere, (1., 0., 0.));
 
         // let cubesphere = Box::new(Intersection {
         //     objects: vec![cube, sphere],
         // });
 
-        let ground = Box::new(Plane { height: -10. });
-        let roof = Box::new(Plane { height: 10. });
+        let ground = Plane { height: -10. };
+        let ground = Coloring::new(ground, (0.61, 0.55, 0.49));
+
+        let roof = Plane { height: 10. };
+        let roof = Coloring::new(roof, (0.57, 0.31, 0.07));
 
         let world = Box::new(Union {
-            objects: vec![Box::new(cube), Box::new(sphere), ground, roof],
+            objects: vec![Box::new(cube), Box::new(sphere), Box::new(ground), Box::new(roof)],
         });
 
         Renderer {
