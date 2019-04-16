@@ -31,8 +31,8 @@ pub struct Rotation<T, TBor>
     marker: PhantomData<TBor>
 }
 
-type RotRef<'a, T> = Rotation<&'a T, T>;
-type RotT<T> = Rotation<T, T>;
+pub type RotRef<'a, T> = Rotation<&'a T, T>;
+pub type RotT<T> = Rotation<T, T>;
 
 impl <T, TBor> Rotation<T, TBor>
     where
@@ -85,8 +85,8 @@ pub struct Translation<T, TBor>
     marker: PhantomData<TBor>
 }
 
-type TransRef<'a, T> = Translation<&'a T, T>;
-type TransT<T> = Translation<T, T>;
+pub type TransRef<'a, T> = Translation<&'a T, T>;
+pub type TransT<T> = Translation<T, T>;
 
 impl <T, TBor> Translation<T, TBor>
     where
@@ -126,8 +126,8 @@ pub struct Scale<T, TBor>
     marker: PhantomData<TBor>
 }
 
-type ScaleRef<'a, T> = Scale<&'a T, T>;
-type ScaleT<T> = Scale<T, T>;
+pub type ScaleRef<'a, T> = Scale<&'a T, T>;
+pub type ScaleT<T> = Scale<T, T>;
 
 impl <T, TBor> Scale<T, TBor>
     where
