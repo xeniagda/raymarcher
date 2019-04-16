@@ -1,6 +1,10 @@
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
+use sdl2::event::Event;
+use sdl2::mouse::MouseUtil;
+
+use std::cell::Cell;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::sleep;
@@ -15,40 +19,48 @@ use ytesrev::prelude::*;
 use crate::vec::Vec3dx16;
 use crate::world::*;
 
+pub static mut MOUSE: Option<MouseUtil> = None;
+
 pub struct Renderer {
     data: Vec<u8>,
-    rotation: f32,
+    rotation_x: f32,
+    rotation_y: f32,
     world: Box<dyn World>,
+    center_mouse: Cell<bool>,
 }
 
-const SIZE: usize = 600;
+pub const SIZE: usize = 600;
 const THREADS: usize = 10;
 
 impl Renderer {
     pub fn new() -> Renderer {
         let cube = Box::new(Cube {
-            center: (0., 0., 0.),
+            center: (1., -2., 5.),
             dims: (0.5, 0.5, 0.5),
         });
+
         let sphere = Box::new(Sphere {
-            pos: (0., 0., 0.),
-            size: 0.75,
+            pos: (4., 0., -7.),
+            size: 1.,
         });
 
-        let cubesphere = Box::new(Intersection {
-            objects: vec![cube, sphere],
-        });
+        // let cubesphere = Box::new(Intersection {
+        //     objects: vec![cube, sphere],
+        // });
 
-        let ground = Box::new(Plane { height: 0. });
+        let ground = Box::new(Plane { height: -10. });
+        let roof = Box::new(Plane { height: 10. });
 
         let world = Box::new(Union {
-            objects: vec![cubesphere, ground],
+            objects: vec![cube, sphere, ground, roof],
         });
 
         Renderer {
             data: vec![0; (4 * SIZE * SIZE) as usize],
             world,
-            rotation: 0.,
+            rotation_x: 0.,
+            rotation_y: 0.,
+            center_mouse: Cell::new(false)
         }
     }
 }
@@ -58,7 +70,6 @@ const FOV_RAD: f32 = FOV_DEG / 360. * PI;
 
 impl Scene for Renderer {
     fn update(&mut self, dt: f64) {
-        self.rotation += dt as f32 * 0.5;
     }
 
     fn draw(&self, canvas: &mut Canvas<Window>, _settings: DrawSettings) {
@@ -80,9 +91,32 @@ impl Scene for Renderer {
         let rect = Rect::new(0, 0, SIZE as u32, SIZE as u32);
 
         canvas.copy(&texture, None, rect).expect("Can't copy");
+
+        if self.center_mouse.replace(false) {
+            unsafe {
+                let (w, h) = canvas.window().size();
+                if let Some(mouse) = &MOUSE {
+                    mouse.warp_mouse_in_window(canvas.window(), w as i32 / 2, h as i32 / 2);
+                    mouse.show_cursor(false);
+                    mouse.set_relative_mouse_mode(true);
+                }
+            }
+        }
+
     }
 
-    fn event(&mut self, _event: YEvent) {}
+    fn event(&mut self, event: YEvent) {
+        match event {
+            YEvent::Other(Event::MouseMotion { xrel, yrel, .. } ) => {
+                self.rotation_x -= xrel as f32 * 0.005;
+                self.rotation_y += yrel as f32 * 0.005;
+                unsafe {
+                    self.center_mouse.set(true);
+                }
+            }
+            _ => {}
+        }
+    }
 
     fn action(&self) -> Action {
         Action::Continue
@@ -97,12 +131,21 @@ impl Renderer {
     fn render(&self) {
         let dones = Arc::new(AtomicUsize::new(0));
 
-        let world = Arc::new(&*self.world);
+        let world_rotated_y = Rotation {
+            around: RotateAround::Y,
+            inner: &*self.world,
+            angle: self.rotation_x
+        };
 
-        let camera = (self.rotation.sin() * 3., 3., -self.rotation.cos() * 3.);
-        // let camera = (0., 40., -40.);
+        let world_rotated_x = Rotation {
+            around: RotateAround::X,
+            inner: &world_rotated_y,
+            angle: self.rotation_y
+        };
 
-        let look = (-self.rotation, -0.6);
+        let world = Arc::new(&world_rotated_x);
+
+        let camera = (0., 0., 0.);
 
         (0..THREADS).into_par_iter().for_each({
             let ptr: *mut u8 = self.data.as_ptr() as *mut u8;
@@ -126,8 +169,8 @@ impl Renderer {
                         let xf = x as f32 / (SIZE - 1) as f32 * 2. - 1.;
                         let yf = y as f32 / (SIZE - 1) as f32 * 2. - 1.;
 
-                        let xrad = look.0 + xf * FOV_RAD;
-                        let yrad = look.1 - yf * FOV_RAD;
+                        let xrad = xf * FOV_RAD;
+                        let yrad = -yf * FOV_RAD;
 
                         let dir: (f32, f32, f32) = (
                             yrad.cos() * xrad.sin(),
