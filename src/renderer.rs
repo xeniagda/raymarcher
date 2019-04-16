@@ -2,6 +2,7 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 use sdl2::event::Event;
+use sdl2::keyboard::Scancode;
 use sdl2::mouse::MouseUtil;
 
 use std::cell::Cell;
@@ -19,6 +20,8 @@ use ytesrev::prelude::*;
 use crate::vec::Vec3dx16;
 use crate::world::*;
 
+const SPEED: f32 = 0.7;
+
 pub static mut MOUSE: Option<MouseUtil> = None;
 
 pub struct Renderer {
@@ -26,6 +29,8 @@ pub struct Renderer {
     rotation_x: f32,
     rotation_y: f32,
     world: Box<Union>,
+    pos: (f32, f32, f32),
+    vel: (f32, f32, f32),
     center_mouse: Cell<bool>,
 }
 
@@ -54,6 +59,8 @@ impl Renderer {
             world,
             rotation_x: 0.,
             rotation_y: 0.,
+            pos: (0., 0., 0.),
+            vel: (0., 0., 0.),
             center_mouse: Cell::new(false)
         }
     }
@@ -64,6 +71,22 @@ const FOV_RAD: f32 = FOV_DEG / 360. * PI;
 
 impl Scene for Renderer {
     fn update(&mut self, dt: f64) {
+        let dt = dt as f32;
+
+        // Rotate around self.rotation_y
+        let mut vel_ = self.vel.clone();
+        vel_.1 = self.vel.1 * self.rotation_y.cos() - self.vel.2 * self.rotation_y.sin();
+        vel_.2 = self.vel.1 * self.rotation_y.sin() + self.vel.2 * self.rotation_y.cos();
+
+        // Rotate around self.rotation_x
+        let mut vel__ = vel_.clone();
+        vel__.0 = vel_.0 * self.rotation_x.cos() - vel_.2 * self.rotation_x.sin();
+        vel__.2 = vel_.0 * self.rotation_x.sin() + vel_.2 * self.rotation_x.cos();
+
+
+        self.pos.0 += vel__.0 * dt;
+        self.pos.1 += vel__.1 * dt;
+        self.pos.2 += vel__.2 * dt;
     }
 
     fn draw(&self, canvas: &mut Canvas<Window>, _settings: DrawSettings) {
@@ -104,9 +127,13 @@ impl Scene for Renderer {
             YEvent::Other(Event::MouseMotion { xrel, yrel, .. } ) => {
                 self.rotation_x -= xrel as f32 * 0.005;
                 self.rotation_y += yrel as f32 * 0.005;
-                unsafe {
-                    self.center_mouse.set(true);
-                }
+                self.center_mouse.set(true);
+            }
+            YEvent::Other(Event::KeyDown { scancode: Some(Scancode::W), .. } ) => {
+                self.vel.2 = -SPEED;
+            }
+            YEvent::Other(Event::KeyUp { scancode: Some(Scancode::W), .. } ) => {
+                self.vel.2 = 0.;
             }
             _ => {}
         }
@@ -125,14 +152,15 @@ impl Renderer {
     fn render(&self) {
         let dones = Arc::new(AtomicUsize::new(0));
 
-        let world_rotated_y: Rotation<&Union, Union>
-                = Rotation::new(&*self.world, Axis::Y, self.rotation_x);
+        let world_translated: TransRef<Union>
+                = Translation::new(&*self.world, self.pos);
+
+        let world_rotated_y = Rotation::new(world_translated, Axis::Y, self.rotation_x);
 
         let world_rotated_x = Rotation::new(world_rotated_y, Axis::X, self.rotation_y);
 
         let world = Arc::new(world_rotated_x);
 
-        let camera = (0., 0., 0.);
 
         (0..THREADS).into_par_iter().for_each({
             let ptr: *mut u8 = self.data.as_ptr() as *mut u8;
@@ -173,7 +201,8 @@ impl Renderer {
 
                         if idx == 16 {
                             idx = 0;
-                            let res16 = raymarch(&*world, Vec3dx16::from_tuple(camera), curr_dirs);
+                            let start_v = Vec3dx16::from_tuple((0., 0., 0.));
+                            let res16 = raymarch(&*world, start_v, curr_dirs);
 
                             for i in 0..16 {
                                 let y_;
