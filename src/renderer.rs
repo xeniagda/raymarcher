@@ -4,6 +4,7 @@ use sdl2::video::Window;
 use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
 use sdl2::mouse::MouseUtil;
+use packed_simd::{u8x16, FromCast};
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -41,7 +42,11 @@ impl Renderer {
     pub fn new() -> Renderer {
         let cube = construct_cuboid((1., -2., 5.), (0.5, 0.5, 0.5));
 
-        let sphere = construct_sphere((-4., 0., -7.), 1.);
+        let cube = Coloring::new(cube, (0., 1., 0.));
+
+        let sphere = construct_sphere((-4., 0., 7.), 1.);
+
+        let sphere = Coloring::new(sphere, (1., 0., 0.));
 
         // let cubesphere = Box::new(Intersection {
         //     objects: vec![cube, sphere],
@@ -202,7 +207,10 @@ impl Renderer {
                         if idx == 16 {
                             idx = 0;
                             let start_v = Vec3dx16::from_tuple((0., 0., 0.));
-                            let res16 = raymarch(&*world, start_v, curr_dirs);
+                            let resCols = raymarch(&*world, start_v, curr_dirs);
+                            let re = u8x16::from_cast(255. * resCols.xs);
+                            let gr = u8x16::from_cast(255. * resCols.ys);
+                            let bl = u8x16::from_cast(255. * resCols.zs);
 
                             for i in 0..16 {
                                 let y_;
@@ -217,11 +225,11 @@ impl Renderer {
 
                                 unsafe {
                                     *(ptr.offset(4 * (x_ + y_ * SIZE) as isize + 0)) =
-                                        res16.extract(i);
+                                        re.extract(i);
                                     *(ptr.offset(4 * (x_ + y_ * SIZE) as isize + 1)) =
-                                        res16.extract(i);
+                                        gr.extract(i);
                                     *(ptr.offset(4 * (x_ + y_ * SIZE) as isize + 2)) =
-                                        res16.extract(i);
+                                        bl.extract(i);
                                     *(ptr.offset(4 * (x_ + y_ * SIZE) as isize + 3)) = 255;
                                 }
                             }

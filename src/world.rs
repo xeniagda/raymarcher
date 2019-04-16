@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::marker::PhantomData;
 
 use crate::vec::Vec3dx16;
-use packed_simd::{f32x16, m32x16, u8x16, FromCast};
+use packed_simd::{f32x16, m32x16, FromCast};
 use std::f32::{INFINITY, NEG_INFINITY};
 
 const EPSILON: f32 = 1e-2;
@@ -14,12 +14,53 @@ pub fn norm(v: &Vec3dx16) -> f32x16 {
 
 pub trait World: Send + Sync {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16;
+
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16;
 }
 
 pub enum Axis {
     X, Y, Z
 }
 
+pub struct Coloring<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub inner: T,
+    pub color: (f32, f32, f32),
+    marker: PhantomData<TBor>
+}
+
+pub type ColorRef<'a, T> = Coloring<&'a T, T>;
+pub type ColorT<T> = Coloring<T, T>;
+
+impl <T, TBor> Coloring<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub fn new(inner: T, color: (f32, f32, f32)) -> Coloring<T, TBor> {
+        Coloring {
+            inner, color, marker: PhantomData
+        }
+    }
+}
+
+impl <T, TBor> World for Coloring<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
+        // haha
+        self.inner.borrow().distance_estimator(x)
+    }
+
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        Vec3dx16::from_tuple(self.color)
+    }
+}
 pub struct Rotation<T, TBor>
     where
         T: Borrow<TBor> + Send + Sync,
@@ -44,14 +85,8 @@ impl <T, TBor> Rotation<T, TBor>
             inner, around, angle, marker: PhantomData
         }
     }
-}
 
-impl <T, TBor> World for Rotation<T, TBor>
-    where
-        T: Borrow<TBor> + Send + Sync,
-        TBor: World
-{
-    fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
+    fn transform(&self, x: &Vec3dx16) -> Vec3dx16 {
         let acos = self.angle.cos();
         let asin = self.angle.sin();
         let mut x_ = x.clone();
@@ -71,7 +106,21 @@ impl <T, TBor> World for Rotation<T, TBor>
                 x_.ys = x.xs * f32x16::splat(asin) + x.ys * f32x16::splat(acos);
             }
         }
-        self.inner.borrow().distance_estimator(&x_)
+        x_
+    }
+}
+
+impl <T, TBor> World for Rotation<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
+        self.inner.borrow().distance_estimator(&self.transform(x))
+    }
+
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        self.inner.borrow().color(&self.transform(x))
     }
 }
 
@@ -98,6 +147,17 @@ impl <T, TBor> Translation<T, TBor>
             inner, at, marker: PhantomData
         }
     }
+
+    fn transform(&self, x: &Vec3dx16) -> Vec3dx16 {
+        // haha
+        let splAT = Vec3dx16 {
+            xs: f32x16::splat(self.at.0),
+            ys: f32x16::splat(self.at.1),
+            zs: f32x16::splat(self.at.2),
+        };
+
+        x - splAT
+    }
 }
 
 impl <T, TBor> World for Translation<T, TBor>
@@ -106,13 +166,10 @@ impl <T, TBor> World for Translation<T, TBor>
         TBor: World
 {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
-        // haha
-        let splAT = Vec3dx16 {
-            xs: f32x16::splat(self.at.0),
-            ys: f32x16::splat(self.at.1),
-            zs: f32x16::splat(self.at.2),
-        };
-        self.inner.borrow().distance_estimator(&(x - splAT))
+        self.inner.borrow().distance_estimator(&self.transform(x))
+    }
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        self.inner.borrow().color(&self.transform(x))
     }
 }
 
@@ -139,6 +196,16 @@ impl <T, TBor> Scale<T, TBor>
             inner, scaling, marker: PhantomData
         }
     }
+
+    fn transform(&self, x: &Vec3dx16) -> Vec3dx16 {
+        let splat = Vec3dx16 {
+            xs: f32x16::splat(self.scaling.0),
+            ys: f32x16::splat(self.scaling.1),
+            zs: f32x16::splat(self.scaling.2),
+        };
+
+        x / splat
+    }
 }
 
 impl <T, TBor> World for Scale<T, TBor>
@@ -147,14 +214,11 @@ impl <T, TBor> World for Scale<T, TBor>
         TBor: World
 {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
-        // haha
-        let splat = Vec3dx16 {
-            xs: f32x16::splat(self.scaling.0),
-            ys: f32x16::splat(self.scaling.1),
-            zs: f32x16::splat(self.scaling.2),
-        };
-        self.inner.borrow().distance_estimator(&(x / splat))
+        self.inner.borrow().distance_estimator(&self.transform(x))
             * self.scaling.0.min(self.scaling.1).min(self.scaling.2)
+    }
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        self.inner.borrow().color(&self.transform(x))
     }
 }
 
@@ -170,6 +234,28 @@ impl World for Union {
         }
         res
     }
+
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        let mut distances = f32x16::splat(INFINITY);
+        let mut colors = Vec3dx16::from_tuple((0., 1., 0.));
+
+        for obj in &self.objects {
+            let distances_ = obj.distance_estimator(x);
+            let closer = distances_.lt(distances);
+
+            if closer.any() {
+                let mask = -f32x16::from_cast(closer);
+
+                let colors_ = obj.color(x);
+                colors.xs = mask * colors_.xs + (1. - mask) * colors.xs;
+                colors.ys = mask * colors_.ys + (1. - mask) * colors.ys;
+                colors.zs = mask * colors_.zs + (1. - mask) * colors.zs;
+            }
+
+            distances = distances.min(distances_);
+        }
+        colors
+    }
 }
 
 pub struct Intersection {
@@ -184,6 +270,10 @@ impl World for Intersection {
         }
         res
     }
+
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        self.objects[0].color(x)
+    }
 }
 
 
@@ -192,6 +282,10 @@ pub struct UnitSphere;
 impl World for UnitSphere {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
         norm(x) - f32x16::splat(1.)
+    }
+
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        Vec3dx16::from_tuple((1., 1., 1.,))
     }
 }
 
@@ -204,6 +298,9 @@ impl World for UnitCube {
         let zs = x.zs.abs() - f32x16::splat(1.);
         xs.max(ys).max(zs)
     }
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        Vec3dx16::from_tuple((1., 1., 1.,))
+    }
 }
 
 pub struct Plane {
@@ -213,6 +310,9 @@ pub struct Plane {
 impl World for Plane {
     fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
         (x.ys - f32x16::splat(self.height)).abs()
+    }
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        Vec3dx16::from_tuple((1., 1., 1.,))
     }
 }
 
@@ -230,7 +330,7 @@ pub fn construct_sphere(at: (f32, f32, f32), rad: f32) -> TransT<ScaleT<UnitSphe
     translated
 }
 
-pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> u8x16 {
+pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> Vec3dx16 {
     let norms = norm(&dirs);
     let dirs = dirs
         / Vec3dx16 {
@@ -239,7 +339,7 @@ pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> u8x16
             zs: norms,
         };
 
-    let mut res = f32x16::splat(0.);
+    let mut res = Vec3dx16::from_tuple((0., 0., 0.));
     let mut hit = m32x16::splat(false);
 
     let mut last_des = f32x16::splat(0.);
@@ -257,18 +357,26 @@ pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> u8x16
         if new_hits.any() {
             let fmask = -f32x16::from_cast(new_hits);
 
-            let colors = 255. - 255. * (des / last_des).min(f32x16::splat(1.));
+            let gray = (des / last_des).min(f32x16::splat(1.));
 
-            res = fmask * colors + (1. - fmask) * res;
+            let colors = world.color(&poses) * Vec3dx16::splat(1. - gray);
+
+            res.xs = fmask * colors.xs + (1. - fmask) * res.xs;
+            res.ys = fmask * colors.ys + (1. - fmask) * res.ys;
+            res.zs = fmask * colors.zs + (1. - fmask) * res.zs;
 
             hit |= new_hits;
         }
         if i == MAX_ITERATIONS - 1 {
             let fmask = -f32x16::from_cast(!hit);
 
-            let colors = 255. - 255. * (des / last_des).min(f32x16::splat(1.));
+            let gray = (des / last_des).min(f32x16::splat(1.));
 
-            res = fmask * colors + (1. - fmask) * res;
+            let colors = world.color(&poses) * Vec3dx16::splat(1. - gray);
+
+            res.xs = fmask * colors.xs + (1. - fmask) * res.xs;
+            res.ys = fmask * colors.ys + (1. - fmask) * res.ys;
+            res.zs = fmask * colors.zs + (1. - fmask) * res.zs;
         }
 
 
@@ -280,5 +388,5 @@ pub fn raymarch(world: &dyn World, mut poses: Vec3dx16, dirs: Vec3dx16) -> u8x16
         poses += move_vec;
         last_des = des;
     }
-    u8x16::from_cast(res)
+    res
 }

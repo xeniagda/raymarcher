@@ -15,6 +15,14 @@ impl Vec3dx16 {
             zs: f32x16::splat(z),
         }
     }
+
+    pub fn splat(val: f32x16) -> Vec3dx16 {
+        Vec3dx16 {
+            xs: val.clone(),
+            ys: val.clone(),
+            zs: val.clone(),
+        }
+    }
 }
 
 macro_rules! impl_op {
