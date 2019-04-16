@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::marker::PhantomData;
 
 use crate::vec::Vec3dx16;
-use packed_simd::{f32x16, m32x16, FromCast};
+use packed_simd::{u32x16, f32x16, m32x16, FromCast};
 use std::f32::{INFINITY, NEG_INFINITY};
 
 const EPSILON: f32 = 1e-2;
@@ -20,6 +20,55 @@ pub trait World: Send + Sync {
 
 pub enum Axis {
     X, Y, Z
+}
+
+pub struct Checkers<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub inner: T,
+    pub color1: (f32, f32, f32),
+    pub color2: (f32, f32, f32),
+    marker: PhantomData<TBor>
+}
+
+pub type CheckerRef<'a, T> = Checkers<&'a T, T>;
+pub type CheckerT<T> = Checkers<T, T>;
+
+impl <T, TBor> Checkers<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    pub fn new(inner: T, color1: (f32, f32, f32), color2: (f32, f32, f32)) -> Checkers<T, TBor> {
+        Checkers {
+            inner, color1, color2, marker: PhantomData
+        }
+    }
+}
+
+impl <T, TBor> World for Checkers<T, TBor>
+    where
+        T: Borrow<TBor> + Send + Sync,
+        TBor: World
+{
+    fn distance_estimator(&self, x: &Vec3dx16) -> f32x16 {
+        // haha
+        self.inner.borrow().distance_estimator(x)
+    }
+
+    fn color(&self, x: &Vec3dx16) -> Vec3dx16 {
+        let xs = u32x16::from_cast(x.xs.abs() + f32x16::splat(0.5));
+        let ys = u32x16::from_cast(x.ys.abs() + f32x16::splat(0.5));
+        let zs = u32x16::from_cast(x.zs.abs() + f32x16::splat(0.5));
+
+        let which = ((xs + ys + zs) % 2).eq(u32x16::splat(0));
+        let mask = Vec3dx16::splat(-f32x16::from_cast(which));
+
+        mask * Vec3dx16::from_tuple(self.color1)
+            + (Vec3dx16::from_tuple((1., 1., 1.,)) - mask) * Vec3dx16::from_tuple(self.color2)
+    }
 }
 
 pub struct Coloring<T, TBor>
@@ -61,6 +110,7 @@ impl <T, TBor> World for Coloring<T, TBor>
         Vec3dx16::from_tuple(self.color)
     }
 }
+
 pub struct Rotation<T, TBor>
     where
         T: Borrow<TBor> + Send + Sync,

@@ -51,7 +51,7 @@ impl Renderer {
         // });
 
         let ground = Plane { height: -10. };
-        let ground = Coloring::new(ground, (0.61, 0.55, 0.49));
+        let ground = Checkers::new(ground, (0.85, 0.85, 0.77), (0.42, 0.34, 0.24));
 
         let roof = Plane { height: 10. };
         let roof = Coloring::new(roof, (0.57, 0.31, 0.07));
