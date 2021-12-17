@@ -36,7 +36,7 @@ pub struct Renderer {
 }
 
 pub const SIZE: usize = 300;
-const THREADS: usize = 10;
+const THREADS: usize = 8;
 
 impl Renderer {
     pub fn new() -> Renderer {
@@ -51,7 +51,7 @@ impl Renderer {
         // });
 
         let ground = Plane { height: -10. };
-        let ground = Checkers::new(ground, (0.85, 0.85, 0.77), (0.42, 0.34, 0.24));
+        let ground = Checkers::new(ground, (0., 0., 0.), (1., 0.5, 0.5));
 
         let roof = Plane { height: 10. };
         let roof = Coloring::new(roof, (0.57, 0.31, 0.07));
