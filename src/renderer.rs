@@ -35,7 +35,7 @@ pub struct Renderer {
     center_mouse: Cell<bool>,
 }
 
-pub const SIZE: usize = 300;
+pub const SIZE: usize = 1000;
 const THREADS: usize = 8;
 
 impl Renderer {
@@ -44,14 +44,14 @@ impl Renderer {
         let cube = Coloring::new(cube, (0., 1., 0.));
 
         let sphere = construct_sphere((-4., 0., 7.), 1.);
-        let sphere = Coloring::new(sphere, (1., 0., 0.));
+        let sphere = Checkers::new(sphere, (0., 0., 0.), (1., 1., 0.));
 
         // let cubesphere = Box::new(Intersection {
         //     objects: vec![cube, sphere],
         // });
 
         let ground = Plane { height: -10. };
-        let ground = Checkers::new(ground, (0., 0., 0.), (1., 0.5, 0.5));
+        let ground = Checkers::new(ground, (0., 0., 0.), (1., 1., 0.));
 
         let roof = Plane { height: 10. };
         let roof = Coloring::new(roof, (0.57, 0.31, 0.07));
