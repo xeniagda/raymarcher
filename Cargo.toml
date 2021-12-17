@@ -7,5 +7,5 @@ edition = "2018"
 [dependencies]
 ytesrev = "0.2.4"
 sdl2 = "*"
-rayon = "1.0.3"
-packed_simd = "0.3"
+rayon = "1.5.1"
+packed_simd = { version = "0.3.6", package = "packed_simd_2" }
